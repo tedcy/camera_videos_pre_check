@@ -1,4 +1,4 @@
-opencv-python>=4.5.0
+opencv-python-headless>=4.5.0
 scikit-image>=0.18.0
 numpy>=1.20.0
 # 多进程并行处理
