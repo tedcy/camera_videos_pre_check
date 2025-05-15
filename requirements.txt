@@ -1,3 +1,5 @@
 opencv-python>=4.5.0
 scikit-image>=0.18.0
 numpy>=1.20.0
+# 多进程并行处理
+futures>=3.1.1; python_version < '3.2'

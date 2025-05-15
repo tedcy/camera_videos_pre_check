@@ -5,6 +5,7 @@ import time
 import datetime
 import configparser
 import numpy as np
+import concurrent.futures
 from skimage.metrics import structural_similarity as ssim
 
 def load_config(config_path='config.ini'):
@@ -24,7 +25,8 @@ def load_config(config_path='config.ini'):
         'ssim_threshold': config.getfloat('VideoProcessing', 'ssim_threshold'),
         'histogram_threshold': config.getfloat('VideoProcessing', 'histogram_threshold', fallback=0.15),
         'pixel_diff_threshold': config.getfloat('VideoProcessing', 'pixel_diff_threshold', fallback=30),
-        'sample_interval_sec': config.getfloat('VideoProcessing', 'sample_interval_sec')
+        'sample_interval_sec': config.getfloat('VideoProcessing', 'sample_interval_sec'),
+        'max_workers': config.getint('VideoProcessing', 'max_workers', fallback=4)
     }
 
 def compare_histogram(prev_frame, curr_frame):
@@ -66,75 +68,90 @@ def compare_pixel_diff(prev_frame, curr_frame):
     # 返回平均差异值
     return np.mean(diff)
 
+def _detect_scene_change_part(video_path, detection_algorithm, ssim_threshold, histogram_threshold, pixel_diff_threshold, sample_interval_sec, start_frame, end_frame):
+    """ 片段检测，有变化即返回 True """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"无法打开视频片段: {video_path}")
+        return False
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    if start_frame >= total_frames:
+        cap.release()
+        return False
+
+    interval = max(int(fps * sample_interval_sec), 1)
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    ret, prev_frame = cap.read()
+    if not ret:
+        cap.release()
+        return False
+
+    if detection_algorithm == 'ssim':
+        prev_gray = cv2.GaussianBlur(cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY), (3,3), 0)
+
+    frame_index = start_frame
+    while frame_index <= end_frame:
+        frame_index += interval
+        if frame_index >= total_frames:
+            break
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if detection_algorithm == 'ssim':
+            gray = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (3,3), 0)
+            similarity, _ = ssim(prev_gray, gray, full=True)
+            if similarity < ssim_threshold:
+                cap.release()
+                return True
+            prev_gray = gray
+        elif detection_algorithm == 'histogram':
+            diff = compare_histogram(prev_frame, frame)
+            if diff > histogram_threshold:
+                cap.release()
+                return True
+        elif detection_algorithm == 'pixel_diff':
+            diff = compare_pixel_diff(prev_frame, frame)
+            if diff > pixel_diff_threshold:
+                cap.release()
+                return True
+        prev_frame = frame
+    cap.release()
+    return False
+
 def has_scene_change(video_path, detection_algorithm='ssim', ssim_threshold=0.95, 
-                    histogram_threshold=0.15, pixel_diff_threshold=30, sample_interval_sec=1):
-    """检测视频是否有画面变化，支持多种算法"""
+                    histogram_threshold=0.15, pixel_diff_threshold=30, sample_interval_sec=1, max_workers=4):
+    """ 调用并行进程处理 """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"无法打开视频: {video_path}")
         return False
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0 or total_frames <= 0:
-        cap.release()
-        print(f"视频无效: {video_path}")
-        return False
-
-    interval = int(fps * sample_interval_sec)
-    if interval <= 0:
-        interval = 1
-        
-    ret, prev_frame = cap.read()
-    if not ret:
-        cap.release()
-        print(f"视频无法读取: {video_path}")
-        return False
-
-    # 根据算法预处理第一帧
-    if detection_algorithm == 'ssim':
-        prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
-        prev_gray = cv2.GaussianBlur(prev_gray, (3,3), 0)
-
-    frame_index = 0
-    change_detected = False
-
-    while True:
-        frame_index += interval
-        if frame_index >= total_frames:
-            break
-
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        # 根据选择的算法检测画面变化
-        if detection_algorithm == 'ssim':
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.GaussianBlur(gray, (3,3), 0)
-            similarity, _ = ssim(prev_gray, gray, full=True)
-            if similarity < ssim_threshold:
-                change_detected = True
-                break
-            prev_gray = gray
-            
-        elif detection_algorithm == 'histogram':
-            diff = compare_histogram(prev_frame, frame)
-            if diff > histogram_threshold:
-                change_detected = True
-                break
-                
-        elif detection_algorithm == 'pixel_diff':
-            diff = compare_pixel_diff(prev_frame, frame)
-            if diff > pixel_diff_threshold:
-                change_detected = True
-                break
-        
-        prev_frame = frame
-
     cap.release()
-    return change_detected
+
+    if total_frames <= max_workers or max_workers <= 1:
+        # 帧数少或者单核，直接顺序处理
+        return _detect_scene_change_part(video_path, detection_algorithm, ssim_threshold,
+                                         histogram_threshold, pixel_diff_threshold, sample_interval_sec, 0, total_frames)
+
+    frames_per_worker = total_frames // max_workers
+    tasks = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        for i in range(max_workers):
+            start = i * frames_per_worker
+            end = (i+1) * frames_per_worker - 1 if i < max_workers - 1 else total_frames - 1
+            tasks.append(executor.submit(_detect_scene_change_part, video_path, detection_algorithm,
+                                         ssim_threshold, histogram_threshold, pixel_diff_threshold,
+                                         sample_interval_sec, start, end))
+        for future in concurrent.futures.as_completed(tasks):
+            if future.result():  # 任何片段发现变化，即可提前退出
+                return True
+    return False
 
 def is_folder_older_than_days(folder_path, days):
     """检查文件夹是否创建超过指定天数"""
@@ -164,7 +181,8 @@ def process_video(src_path, dst_path, config):
             ssim_threshold=config['ssim_threshold'],
             histogram_threshold=config['histogram_threshold'],
             pixel_diff_threshold=config['pixel_diff_threshold'],
-            sample_interval_sec=config['sample_interval_sec']
+            sample_interval_sec=config['sample_interval_sec'],
+            max_workers=config['max_workers']  # 添加并行处理参数
         ):
             # 确保目标目录存在
             dst_dir = os.path.dirname(dst_path)
@@ -230,6 +248,7 @@ def main():
         print(f"源目录: {config['source_dir']}")
         print(f"目标目录: {config['target_dir']}")
         print(f"检测算法: {config['detection_algorithm']}")
+        print(f"并行处理核心数: {config['max_workers']}")
         
         # 确保目标根目录存在
         ensure_dir(config['target_dir'])
