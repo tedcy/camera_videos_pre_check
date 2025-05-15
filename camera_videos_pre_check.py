@@ -20,7 +20,7 @@ def load_config(config_path='config.ini'):
         'source_dir': config.get('Directories', 'source_dir'),
         'target_dir': config.get('Directories', 'target_dir'),
         'video_extensions': [ext.strip() for ext in config.get('Directories', 'video_extensions').split(',')],
-        'max_folder_age_days': config.getint('Directories', 'max_folder_age_days'),
+        'empty_folder_age_days': config.getint('Directories', 'empty_folder_age_days', fallback=3),
         'detection_algorithm': config.get('VideoProcessing', 'detection_algorithm', fallback='ssim'),
         'ssim_threshold': config.getfloat('VideoProcessing', 'ssim_threshold'),
         'histogram_threshold': config.getfloat('VideoProcessing', 'histogram_threshold', fallback=0.15),
@@ -207,21 +207,26 @@ def process_video(src_path, dst_path, config):
         print(f"处理出错: {src_path}, 错误: {e}，耗时: {elapsed_time:.2f}秒")
         return False
 
+def is_empty_directory(path):
+    """检查目录是否为空"""
+    return len(os.listdir(path)) == 0
+
 def process_directory(config):
     """处理源目录下的所有子文件夹"""
     source_dir = config['source_dir']
     target_dir = config['target_dir']
     video_extensions = config['video_extensions']
-    max_folder_age_days = config['max_folder_age_days']
+    empty_folder_age_days = config['empty_folder_age_days']
     
     # 遍历源目录下的所有子文件夹
-    for root, dirs, files in os.walk(source_dir):
-        # 检查子文件夹是否超过最大保留天数
-        rel_path = os.path.relpath(root, source_dir)
-        if rel_path != '.' and is_folder_older_than_days(root, max_folder_age_days):
-            print(f"文件夹创建超过{max_folder_age_days}天，删除: {root}")
-            shutil.rmtree(root)
-            continue
+    for root, dirs, files in os.walk(source_dir, topdown=False):  # 自底向上遍历，先处理最深层目录
+        # 检查是否为空目录
+        if is_empty_directory(root):
+            rel_path = os.path.relpath(root, source_dir)
+            if rel_path != '.' and is_folder_older_than_days(root, empty_folder_age_days):
+                print(f"空目录创建超过{empty_folder_age_days}天，删除: {root}")
+                shutil.rmtree(root)
+                continue
         
         # 处理当前文件夹中的视频文件
         for file in files:
@@ -249,6 +254,7 @@ def main():
         print(f"目标目录: {config['target_dir']}")
         print(f"检测算法: {config['detection_algorithm']}")
         print(f"并行处理核心数: {config['max_workers']}")
+        print(f"空目录最大保留天数: {config['empty_folder_age_days']}")
         
         # 确保目标根目录存在
         ensure_dir(config['target_dir'])
