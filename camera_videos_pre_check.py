@@ -220,6 +220,14 @@ def extract_date_from_path(file_path):
     # 打印当前处理的文件路径，用于调试
     print(f"正在提取日期，文件路径: {file_path}")
     
+    # 提取子目录名（如test1、test2）
+    parts = file_path.split(os.sep)
+    subdir_name = ""
+    for i, part in enumerate(parts):
+        if part == "source" and i+1 < len(parts):
+            subdir_name = parts[i+1]
+            break
+    
     # 尝试从路径中提取日期
     # 格式1: source/test1/2025051122/45M49S_1746855949.mp4
     pattern1 = r'/(\d{10})/'
@@ -228,8 +236,8 @@ def extract_date_from_path(file_path):
         date_str = match.group(1)
         date_part = date_str[:8]  # YYYYMMDD部分
         hour_part = date_str[8:10]  # HH部分
-        print(f"匹配格式1，提取日期: {date_part}，小时: {hour_part}")
-        return date_part, hour_part, "format1"
+        print(f"匹配格式1，提取日期: {date_part}，小时: {hour_part}，子目录: {subdir_name}")
+        return date_part, hour_part, "format1", subdir_name
     
     # 格式2: source/test2/00_20250516014118_20250516014118.mp4
     pattern2 = r'_(\d{14})_'
@@ -237,12 +245,12 @@ def extract_date_from_path(file_path):
     if match:
         date_str = match.group(1)
         date_part = date_str[:8]  # YYYYMMDD部分
-        print(f"匹配格式2，提取日期: {date_part}")
-        return date_part, "", "format2"
+        print(f"匹配格式2，提取日期: {date_part}，子目录: {subdir_name}")
+        return date_part, "", "format2", subdir_name
     
     # 如果无法提取日期，使用当前日期
-    print(f"无法提取日期，使用当前日期")
-    return datetime.datetime.now().strftime('%Y%m%d'), "", "unknown"
+    print(f"无法提取日期，使用当前日期，子目录: {subdir_name}")
+    return datetime.datetime.now().strftime('%Y%m%d'), "", "unknown", subdir_name
 
 def process_directory(config):
     """处理源目录"""
@@ -293,10 +301,15 @@ def process_directory(config):
                     print(f"找到视频文件: {src_path}")
                     
                     # 从文件路径中提取日期和额外信息
-                    date_part, hour_part, format_type = extract_date_from_path(src_path)
+                    date_part, hour_part, format_type, subdir_name = extract_date_from_path(src_path)
                     
-                    # 构建目标路径，按日期组织
-                    dst_dir = os.path.join(target_dir, date_part)
+                    # 构建目标路径，保留子目录结构
+                    if subdir_name:
+                        # 如果有子目录名，则在目标路径中包含子目录名和日期
+                        dst_dir = os.path.join(target_dir, subdir_name, date_part)
+                    else:
+                        # 如果没有子目录名，则只使用日期
+                        dst_dir = os.path.join(target_dir, date_part)
                     
                     # 根据格式类型处理文件名
                     file_name, file_ext = os.path.splitext(file)
