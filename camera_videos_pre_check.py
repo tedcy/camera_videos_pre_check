@@ -219,30 +219,41 @@ def extract_date_from_path(file_path, source_dir):
     """从文件路径中提取日期信息，返回YYYYMMDD格式的字符串和额外信息"""
     # 打印当前处理的文件路径，用于调试
     print(f"正在提取日期，文件路径: {file_path}")
+    print(f"源目录: {source_dir}")
     
     # 提取子目录名
     # 首先规范化路径，确保使用正确的路径分隔符
     norm_path = os.path.normpath(file_path)
     norm_source = os.path.normpath(source_dir)
     
+    print(f"规范化后的文件路径: {norm_path}")
+    print(f"规范化后的源目录: {norm_source}")
+    
     # 检查文件路径是否包含源目录
     if norm_source in norm_path:
+        print(f"文件路径包含源目录")
         # 获取源目录之后的路径部分
         rel_path = os.path.relpath(norm_path, norm_source)
+        print(f"相对路径: {rel_path}")
         parts = rel_path.split(os.sep)
+        print(f"路径部分: {parts}")
         # 第一个部分是子目录名
         subdir_name = parts[0] if parts and parts[0] else ""
+        print(f"使用相对路径方法提取的子目录名: {subdir_name}")
     else:
+        print(f"文件路径不包含源目录，尝试使用其他方法")
         # 如果文件路径不包含源目录，尝试使用其他方法提取子目录名
         parts = norm_path.split(os.sep)
+        print(f"路径部分: {parts}")
         # 尝试找到最接近日期部分的目录作为子目录名
         subdir_name = ""
         for part in parts:
             if not re.match(r'^\d+$', part):  # 不是纯数字的部分可能是子目录名
-                subdir_name = part
-                # 如果找到了可能的子目录名，就跳出循环
-                if subdir_name and not subdir_name.startswith('.'):
-                    break
+                print(f"检查部分: {part}")
+                if part and not part.startswith('.'):
+                    subdir_name = part
+                    print(f"找到可能的子目录名: {subdir_name}")
+        print(f"使用启发式方法提取的子目录名: {subdir_name}")
     
     # 尝试从路径中提取日期
     # 格式1: .../2025051122/45M49S_1746855949.mp4
