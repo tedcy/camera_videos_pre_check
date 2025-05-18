@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 import os
 import shutil
 import cv2
@@ -6,12 +9,13 @@ import datetime
 import configparser
 import numpy as np
 import concurrent.futures
+import re
 from skimage.metrics import structural_similarity as ssim
 
 def load_config(config_path='config.ini'):
     """加载配置文件"""
     if not os.path.exists(config_path):
-        raise FileNotFoundError(f"配置文件不存在: {config_path}")
+        raise IOError("配置文件不存在: {}".format(config_path))
     
     config = configparser.ConfigParser()
     config.read(config_path, encoding='utf-8')
@@ -128,7 +132,7 @@ def has_scene_change(video_path, detection_algorithm='ssim', ssim_threshold=0.95
     """ 调用并行进程处理 """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"无法打开视频: {video_path}")
+        print("无法打开视频: {}".format(video_path))
         return False
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -211,37 +215,106 @@ def is_empty_directory(path):
     """检查目录是否为空"""
     return len(os.listdir(path)) == 0
 
+def extract_date_from_path(file_path):
+    """从文件路径中提取日期信息，返回YYYYMMDD格式的字符串和额外信息"""
+    # 打印当前处理的文件路径，用于调试
+    print(f"正在提取日期，文件路径: {file_path}")
+    
+    # 尝试从路径中提取日期
+    # 格式1: source/test1/2025051122/45M49S_1746855949.mp4
+    pattern1 = r'/(\d{10})/'
+    match = re.search(pattern1, file_path)
+    if match:
+        date_str = match.group(1)
+        date_part = date_str[:8]  # YYYYMMDD部分
+        hour_part = date_str[8:10]  # HH部分
+        print(f"匹配格式1，提取日期: {date_part}，小时: {hour_part}")
+        return date_part, hour_part, "format1"
+    
+    # 格式2: source/test2/00_20250516014118_20250516014118.mp4
+    pattern2 = r'_(\d{14})_'
+    match = re.search(pattern2, file_path)
+    if match:
+        date_str = match.group(1)
+        date_part = date_str[:8]  # YYYYMMDD部分
+        print(f"匹配格式2，提取日期: {date_part}")
+        return date_part, "", "format2"
+    
+    # 如果无法提取日期，使用当前日期
+    print(f"无法提取日期，使用当前日期")
+    return datetime.datetime.now().strftime('%Y%m%d'), "", "unknown"
+
 def process_directory(config):
-    """处理源目录下的所有子文件夹"""
+    """处理源目录"""
     source_dir = config['source_dir']
     target_dir = config['target_dir']
     video_extensions = config['video_extensions']
     empty_folder_age_days = config['empty_folder_age_days']
     
-    # 遍历源目录下的所有子文件夹
-    for root, dirs, files in os.walk(source_dir, topdown=False):  # 自底向上遍历，先处理最深层目录
-        # 检查是否为空目录
-        if is_empty_directory(root):
-            rel_path = os.path.relpath(root, source_dir)
-            if rel_path != '.' and is_folder_older_than_days(root, empty_folder_age_days):
-                print(f"空目录创建超过{empty_folder_age_days}天，删除: {root}")
-                shutil.rmtree(root)
-                continue
+    print(f"视频扩展名: {video_extensions}")
+    
+    # 确保目标根目录存在
+    ensure_dir(target_dir)
+    
+    # 检查源目录是否存在
+    if not os.path.exists(source_dir):
+        print(f"源目录不存在: {source_dir}")
+        return
+    
+    # 获取源目录下的所有一级子目录
+    subdirs = [d for d in os.listdir(source_dir) if os.path.isdir(os.path.join(source_dir, d))]
+    print(f"发现子目录: {subdirs}")
+    
+    for subdir in subdirs:
+        subdir_path = os.path.join(source_dir, subdir)
+        print(f"处理子目录: {subdir_path}")
         
-        # 处理当前文件夹中的视频文件
-        for file in files:
-            if any(file.lower().endswith(ext) for ext in video_extensions):
-                src_path = os.path.join(root, file)
+        # 遍历子目录下的所有文件夹
+        for root, dirs, files in os.walk(subdir_path, topdown=False):  # 自底向上遍历，先处理最深层目录
+            print(f"当前目录: {root}")
+            print(f"包含文件: {files}")
+            
+            # 检查是否为空目录
+            if is_empty_directory(root):
+                print(f"空目录: {root}")
+                if is_folder_older_than_days(root, empty_folder_age_days):
+                    print(f"空目录创建超过{empty_folder_age_days}天，删除: {root}")
+                    shutil.rmtree(root)
+                continue
+            
+            # 处理当前文件夹中的视频文件
+            for file in files:
+                print(f"检查文件: {file}")
+                is_video = any(file.lower().endswith(ext) for ext in video_extensions)
+                print(f"是否为视频文件: {is_video}")
                 
-                # 计算目标路径，保持相同的目录结构
-                rel_path = os.path.relpath(root, source_dir)
-                if rel_path == '.':
-                    dst_dir = target_dir
-                else:
-                    dst_dir = os.path.join(target_dir, rel_path)
-                
-                dst_path = os.path.join(dst_dir, file)
-                process_video(src_path, dst_path, config)
+                if is_video:
+                    src_path = os.path.join(root, file)
+                    print(f"找到视频文件: {src_path}")
+                    
+                    # 从文件路径中提取日期和额外信息
+                    date_part, hour_part, format_type = extract_date_from_path(src_path)
+                    
+                    # 构建目标路径，按日期组织
+                    dst_dir = os.path.join(target_dir, date_part)
+                    
+                    # 根据格式类型处理文件名
+                    file_name, file_ext = os.path.splitext(file)
+                    if format_type == "format1" and hour_part:
+                        # 格式1：将小时信息添加到文件名前面
+                        new_file_name = f"{hour_part}_{file_name}{file_ext}"
+                    else:
+                        new_file_name = file
+                    
+                    dst_path = os.path.join(dst_dir, new_file_name)
+                    print(f"目标路径: {dst_path}")
+                    
+                    # 如果目标文件已存在，跳过处理
+                    if os.path.exists(dst_path):
+                        print(f"目标文件已存在，跳过处理: {dst_path}")
+                        continue
+                    
+                    process_video(src_path, dst_path, config)
 
 def main():
     """主函数"""
@@ -256,10 +329,7 @@ def main():
         print(f"并行处理核心数: {config['max_workers']}")
         print(f"空目录最大保留天数: {config['empty_folder_age_days']}")
         
-        # 确保目标根目录存在
-        ensure_dir(config['target_dir'])
-        
-        # 处理所有子目录
+        # 处理源目录
         process_directory(config)
         
         print("处理完成!")
