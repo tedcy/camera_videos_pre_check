@@ -237,23 +237,55 @@ def extract_date_from_path(file_path, source_dir):
         print(f"相对路径: {rel_path}")
         parts = rel_path.split(os.sep)
         print(f"路径部分: {parts}")
-        # 第一个部分是子目录名
-        subdir_name = parts[0] if parts and parts[0] else ""
-        print(f"使用相对路径方法提取的子目录名: {subdir_name}")
+        
+        # 提取日期目录之前的所有部分作为子目录名
+        date_dir_index = -1
+        for i, part in enumerate(parts):
+            if re.match(r'^\d{10}$', part):  # 查找形如2025051300的日期目录
+                date_dir_index = i
+                break
+        
+        if date_dir_index > 0:
+            # 如果找到日期目录，取其之前的所有部分作为子目录名
+            subdir_parts = parts[:date_dir_index]
+            subdir_name = os.path.join(*subdir_parts)
+            print(f"找到日期目录，之前的部分作为子目录名: {subdir_name}")
+        else:
+            # 如果没有找到日期目录，取除了最后一个部分（文件名）之外的所有部分作为子目录名
+            if len(parts) > 1:
+                subdir_parts = parts[:-1]  # 排除最后一个部分（文件名）
+                subdir_name = os.path.join(*subdir_parts)
+                print(f"未找到日期目录，使用除文件名外的所有部分作为子目录名: {subdir_name}")
+            else:
+                subdir_name = ""
+                print(f"路径部分不足，无法提取子目录名")
     else:
         print(f"文件路径不包含源目录，尝试使用其他方法")
         # 如果文件路径不包含源目录，尝试使用其他方法提取子目录名
         parts = norm_path.split(os.sep)
         print(f"路径部分: {parts}")
-        # 尝试找到最接近日期部分的目录作为子目录名
-        subdir_name = ""
-        for part in parts:
-            if not re.match(r'^\d+$', part):  # 不是纯数字的部分可能是子目录名
-                print(f"检查部分: {part}")
-                if part and not part.startswith('.'):
-                    subdir_name = part
-                    print(f"找到可能的子目录名: {subdir_name}")
-        print(f"使用启发式方法提取的子目录名: {subdir_name}")
+        
+        # 尝试找到日期目录，并取其之前的部分作为子目录名
+        date_dir_index = -1
+        for i, part in enumerate(parts):
+            if re.match(r'^\d{10}$', part):  # 查找形如2025051300的日期目录
+                date_dir_index = i
+                break
+        
+        if date_dir_index > 0:
+            # 如果找到日期目录，取其之前的最后一个部分作为子目录名
+            subdir_name = parts[date_dir_index-1]
+            print(f"找到日期目录，之前的部分作为子目录名: {subdir_name}")
+        else:
+            # 如果没有找到日期目录，使用启发式方法
+            subdir_name = ""
+            for part in parts:
+                if not re.match(r'^\d+$', part):  # 不是纯数字的部分可能是子目录名
+                    print(f"检查部分: {part}")
+                    if part and not part.startswith('.'):
+                        subdir_name = part
+                        print(f"找到可能的子目录名: {subdir_name}")
+            print(f"使用启发式方法提取的子目录名: {subdir_name}")
     
     # 尝试从路径中提取日期
     # 格式1: .../2025051122/45M49S_1746855949.mp4
@@ -333,7 +365,16 @@ def process_directory(config):
                     # 构建目标路径，保留子目录结构
                     if subdir_name:
                         # 如果有子目录名，则在目标路径中包含子目录名和日期
-                        dst_dir = os.path.join(target_dir, subdir_name, date_part)
+                        # 检查子目录名是否包含目标目录的一部分，避免重复
+                        target_base = os.path.basename(target_dir)
+                        if target_base in subdir_name.split(os.sep):
+                            # 如果子目录名包含目标目录的一部分，则去除重复部分
+                            subdir_parts = subdir_name.split(os.sep)
+                            if target_base in subdir_parts:
+                                subdir_parts.remove(target_base)
+                            subdir_name = os.path.join(*subdir_parts) if subdir_parts else ""
+                        
+                        dst_dir = os.path.join(target_dir, subdir_name, date_part) if subdir_name else os.path.join(target_dir, date_part)
                     else:
                         # 如果没有子目录名，则只使用日期
                         dst_dir = os.path.join(target_dir, date_part)
