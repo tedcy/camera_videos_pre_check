@@ -215,21 +215,37 @@ def is_empty_directory(path):
     """检查目录是否为空"""
     return len(os.listdir(path)) == 0
 
-def extract_date_from_path(file_path):
+def extract_date_from_path(file_path, source_dir):
     """从文件路径中提取日期信息，返回YYYYMMDD格式的字符串和额外信息"""
     # 打印当前处理的文件路径，用于调试
     print(f"正在提取日期，文件路径: {file_path}")
     
-    # 提取子目录名（如test1、test2）
-    parts = file_path.split(os.sep)
-    subdir_name = ""
-    for i, part in enumerate(parts):
-        if part == "source" and i+1 < len(parts):
-            subdir_name = parts[i+1]
-            break
+    # 提取子目录名
+    # 首先规范化路径，确保使用正确的路径分隔符
+    norm_path = os.path.normpath(file_path)
+    norm_source = os.path.normpath(source_dir)
+    
+    # 检查文件路径是否包含源目录
+    if norm_source in norm_path:
+        # 获取源目录之后的路径部分
+        rel_path = os.path.relpath(norm_path, norm_source)
+        parts = rel_path.split(os.sep)
+        # 第一个部分是子目录名
+        subdir_name = parts[0] if parts and parts[0] else ""
+    else:
+        # 如果文件路径不包含源目录，尝试使用其他方法提取子目录名
+        parts = norm_path.split(os.sep)
+        # 尝试找到最接近日期部分的目录作为子目录名
+        subdir_name = ""
+        for part in parts:
+            if not re.match(r'^\d+$', part):  # 不是纯数字的部分可能是子目录名
+                subdir_name = part
+                # 如果找到了可能的子目录名，就跳出循环
+                if subdir_name and not subdir_name.startswith('.'):
+                    break
     
     # 尝试从路径中提取日期
-    # 格式1: source/test1/2025051122/45M49S_1746855949.mp4
+    # 格式1: .../2025051122/45M49S_1746855949.mp4
     pattern1 = r'/(\d{10})/'
     match = re.search(pattern1, file_path)
     if match:
@@ -239,7 +255,7 @@ def extract_date_from_path(file_path):
         print(f"匹配格式1，提取日期: {date_part}，小时: {hour_part}，子目录: {subdir_name}")
         return date_part, hour_part, "format1", subdir_name
     
-    # 格式2: source/test2/00_20250516014118_20250516014118.mp4
+    # 格式2: .../00_20250516014118_20250516014118.mp4
     pattern2 = r'_(\d{14})_'
     match = re.search(pattern2, file_path)
     if match:
@@ -301,7 +317,7 @@ def process_directory(config):
                     print(f"找到视频文件: {src_path}")
                     
                     # 从文件路径中提取日期和额外信息
-                    date_part, hour_part, format_type, subdir_name = extract_date_from_path(src_path)
+                    date_part, hour_part, format_type, subdir_name = extract_date_from_path(src_path, source_dir)
                     
                     # 构建目标路径，保留子目录结构
                     if subdir_name:
