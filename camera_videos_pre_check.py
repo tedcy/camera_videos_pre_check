@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import os
@@ -15,7 +15,7 @@ from skimage.metrics import structural_similarity as ssim
 def load_config(config_path='config.ini'):
     """加载配置文件"""
     if not os.path.exists(config_path):
-        raise IOError("配置文件不存在: {}".format(config_path))
+        raise IOError(f"配置文件不存在: {config_path}")
     
     config = configparser.ConfigParser()
     config.read(config_path, encoding='utf-8')
@@ -30,7 +30,8 @@ def load_config(config_path='config.ini'):
         'histogram_threshold': config.getfloat('VideoProcessing', 'histogram_threshold', fallback=0.15),
         'pixel_diff_threshold': config.getfloat('VideoProcessing', 'pixel_diff_threshold', fallback=30),
         'sample_interval_sec': config.getfloat('VideoProcessing', 'sample_interval_sec'),
-        'max_workers': config.getint('VideoProcessing', 'max_workers', fallback=4)
+        'max_workers': config.getint('VideoProcessing', 'max_workers', fallback=4),
+        'allowed_sizes_mb': [int(size.strip()) for size in config.get('VideoProcessing', 'allowed_sizes_mb').split(',') if size.strip()]
     }
 
 def compare_histogram(prev_frame, curr_frame):
@@ -132,7 +133,7 @@ def has_scene_change(video_path, detection_algorithm='ssim', ssim_threshold=0.95
     """ 调用并行进程处理 """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print("无法打开视频: {}".format(video_path))
+        print(f"无法打开视频: {video_path}")
         return False
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -358,6 +359,13 @@ def process_directory(config):
                 if is_video:
                     src_path = os.path.join(root, file)
                     print(f"找到视频文件: {src_path}")
+
+                    # 检查文件大小
+                    if config['allowed_sizes_mb']:
+                        file_size_mb = os.path.getsize(src_path) / (1024 * 1024)
+                        if int(file_size_mb) not in config['allowed_sizes_mb']:
+                            print(f"文件大小 {file_size_mb:.2f}MB 不在允许的列表中，跳过: {src_path}")
+                            continue
                     
                     # 从文件路径中提取日期和额外信息
                     date_part, hour_part, format_type, subdir_name = extract_date_from_path(src_path, source_dir)
