@@ -27,6 +27,7 @@ def load_config(config_path='config.ini'):
         'empty_folder_age_days': config.getint('Directories', 'empty_folder_age_days', fallback=3),
         'detection_algorithm': config.get('VideoProcessing', 'detection_algorithm', fallback='ssim'),
         'ssim_threshold': config.getfloat('VideoProcessing', 'ssim_threshold'),
+        'ssim_scale': config.getfloat('VideoProcessing', 'ssim_scale', fallback=0.5),
         'histogram_threshold': config.getfloat('VideoProcessing', 'histogram_threshold', fallback=0.15),
         'pixel_diff_threshold': config.getfloat('VideoProcessing', 'pixel_diff_threshold', fallback=30),
         'sample_interval_sec': config.getfloat('VideoProcessing', 'sample_interval_sec'),
@@ -73,7 +74,7 @@ def compare_pixel_diff(prev_frame, curr_frame):
     # 返回平均差异值
     return np.mean(diff)
 
-def _detect_scene_change_part(video_path, detection_algorithm, ssim_threshold, histogram_threshold, pixel_diff_threshold, sample_interval_sec, start_frame, end_frame):
+def _detect_scene_change_part(video_path, detection_algorithm, ssim_threshold, ssim_scale, histogram_threshold, pixel_diff_threshold, sample_interval_sec, start_frame, end_frame):
     """ 片段检测，有变化即返回 True """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -98,6 +99,8 @@ def _detect_scene_change_part(video_path, detection_algorithm, ssim_threshold, h
     max_diff_value = 0
     if detection_algorithm == 'ssim':
         prev_gray = cv2.GaussianBlur(cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY), (3,3), 0)
+        if ssim_scale and ssim_scale < 1.0:
+            prev_gray = cv2.resize(prev_gray, (0,0), fx=ssim_scale, fy=ssim_scale, interpolation=cv2.INTER_AREA)
         max_diff_value = 1.0  # For SSIM, we look for the minimum value
 
     frame_index = start_frame
@@ -111,7 +114,9 @@ def _detect_scene_change_part(video_path, detection_algorithm, ssim_threshold, h
             break
         if detection_algorithm == 'ssim':
             gray = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (3,3), 0)
-            similarity, _ = ssim(prev_gray, gray, full=True)
+            if ssim_scale and ssim_scale < 1.0:
+                gray = cv2.resize(gray, (0,0), fx=ssim_scale, fy=ssim_scale, interpolation=cv2.INTER_AREA)
+            similarity = ssim(prev_gray, gray)
             max_diff_value = min(max_diff_value, similarity)
             if similarity < ssim_threshold:
                 print(f"SSIM change detected: {similarity:.4f} < {ssim_threshold}", flush=True)
@@ -142,7 +147,7 @@ def _detect_scene_change_part(video_path, detection_algorithm, ssim_threshold, h
     cap.release()
     return False
 
-def has_scene_change(video_path, detection_algorithm='ssim', ssim_threshold=0.95, 
+def has_scene_change(video_path, detection_algorithm='ssim', ssim_threshold=0.95, ssim_scale=0.5,
                     histogram_threshold=0.15, pixel_diff_threshold=30, sample_interval_sec=1, max_workers=4):
     """ 调用并行进程处理 """
     cap = cv2.VideoCapture(video_path)
@@ -155,7 +160,7 @@ def has_scene_change(video_path, detection_algorithm='ssim', ssim_threshold=0.95
 
     if total_frames <= max_workers or max_workers <= 1:
         # 帧数少或者单核，直接顺序处理
-        return _detect_scene_change_part(video_path, detection_algorithm, ssim_threshold,
+        return _detect_scene_change_part(video_path, detection_algorithm, ssim_threshold, ssim_scale,
                                          histogram_threshold, pixel_diff_threshold, sample_interval_sec, 0, total_frames)
 
     frames_per_worker = total_frames // max_workers
@@ -165,7 +170,7 @@ def has_scene_change(video_path, detection_algorithm='ssim', ssim_threshold=0.95
             start = i * frames_per_worker
             end = (i+1) * frames_per_worker - 1 if i < max_workers - 1 else total_frames - 1
             tasks.append(executor.submit(_detect_scene_change_part, video_path, detection_algorithm,
-                                         ssim_threshold, histogram_threshold, pixel_diff_threshold,
+                                         ssim_threshold, ssim_scale, histogram_threshold, pixel_diff_threshold,
                                          sample_interval_sec, start, end))
         for future in concurrent.futures.as_completed(tasks):
             if future.result():  # 任何片段发现变化，即可提前退出
@@ -195,9 +200,10 @@ def process_video(src_path, dst_path, config):
     try:
         print(f"开始处理视频: {src_path}", flush=True)
         if has_scene_change(
-            src_path, 
+            src_path,
             detection_algorithm=config['detection_algorithm'],
             ssim_threshold=config['ssim_threshold'],
+            ssim_scale=config['ssim_scale'],
             histogram_threshold=config['histogram_threshold'],
             pixel_diff_threshold=config['pixel_diff_threshold'],
             sample_interval_sec=config['sample_interval_sec'],
