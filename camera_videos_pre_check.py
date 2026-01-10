@@ -95,8 +95,10 @@ def _detect_scene_change_part(video_path, detection_algorithm, ssim_threshold, h
         cap.release()
         return False
 
+    max_diff_value = 0
     if detection_algorithm == 'ssim':
         prev_gray = cv2.GaussianBlur(cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY), (3,3), 0)
+        max_diff_value = 1.0  # For SSIM, we look for the minimum value
 
     frame_index = start_frame
     while frame_index <= end_frame:
@@ -110,21 +112,33 @@ def _detect_scene_change_part(video_path, detection_algorithm, ssim_threshold, h
         if detection_algorithm == 'ssim':
             gray = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (3,3), 0)
             similarity, _ = ssim(prev_gray, gray, full=True)
+            max_diff_value = min(max_diff_value, similarity)
             if similarity < ssim_threshold:
+                print(f"SSIM change detected: {similarity:.4f} < {ssim_threshold}")
                 cap.release()
                 return True
             prev_gray = gray
         elif detection_algorithm == 'histogram':
             diff = compare_histogram(prev_frame, frame)
+            max_diff_value = max(max_diff_value, diff)
             if diff > histogram_threshold:
+                print(f"Histogram change detected: {diff:.4f} > {histogram_threshold}")
                 cap.release()
                 return True
         elif detection_algorithm == 'pixel_diff':
             diff = compare_pixel_diff(prev_frame, frame)
+            max_diff_value = max(max_diff_value, diff)
             if diff > pixel_diff_threshold:
+                print(f"Pixel diff change detected: {diff:.2f} > {pixel_diff_threshold}")
                 cap.release()
                 return True
         prev_frame = frame
+    
+    if detection_algorithm == 'ssim':
+        print(f"片段 {start_frame}-{end_frame}: 最小SSIM值: {max_diff_value:.4f} (阈值: < {ssim_threshold})")
+    else:
+        print(f"片段 {start_frame}-{end_frame}: 最大 {detection_algorithm} 差异: {max_diff_value:.4f}")
+
     cap.release()
     return False
 
