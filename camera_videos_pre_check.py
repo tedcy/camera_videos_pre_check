@@ -359,6 +359,8 @@ def process_directory(config):
         
         # 遍历子目录下的所有文件夹
         for root, dirs, files in os.walk(subdir_path, topdown=False):  # 自底向上遍历，先处理最深层目录
+            dirs.sort()          # 可选：保证遍历子目录顺序稳定
+            files.sort()         # 关键：保证文件顺序稳定
             print(f"当前目录: {root}", flush=True)
             print(f"包含文件: {files}", flush=True)
             
