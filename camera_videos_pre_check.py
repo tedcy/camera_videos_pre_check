@@ -422,7 +422,8 @@ def process_directory(config):
                     
                     # 如果目标文件已存在，跳过处理
                     if os.path.exists(dst_path):
-                        print(f"目标文件已存在，跳过处理: {dst_path}", flush=True)
+                        print(f"目标文件已存在，源文件直接删除: {dst_path}", flush=True)
+                        os.remove(src_path)
                         continue
                     
                     process_video(src_path, dst_path, config)
